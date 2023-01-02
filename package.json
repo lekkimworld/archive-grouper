@@ -1,7 +1,7 @@
 {
-  "name": "foo",
+  "name": "archive-grouper",
   "version": "1.0.0",
-  "description": "",
+  "description": "Utility to group media files into archives",
   "main": "src/index.ts",
   "scripts": {
     "start": "npx ts-node src/index.ts"
