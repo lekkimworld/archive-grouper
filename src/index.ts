@@ -102,6 +102,37 @@ const bucketFilesByYearMonth = async (directory : string) : Promise<Record<strin
     return years;
 }
 
+const bucketFilesByYear = async (directory: string): Promise<Record<string, FileDetails[]>> => {
+    const files = await fs.readdir(path.join(directory));
+    const years: Record<string, FileDetails[]> = {};
+    const sem = semaphore(1);
+
+    const details = await Promise.allSettled(
+        files.map(async (file): Promise<FileDetails | undefined> => {
+            try {
+                const details = await getFileDetails(directory, file);
+                sem.take(() => {
+                    const year = `${details.createdDate.year()}`;
+                    let bucketYear = years[year];
+                    if (!bucketYear) {
+                        bucketYear = []
+                        years[year] = bucketYear;
+                        bucketYear.push(details);
+                    } else {
+                        bucketYear.push(details);
+                    }
+
+                    // leave semaphore
+                    sem.leave();
+                });
+                return details;
+            } catch (err: any) {
+                return Promise.reject(err);
+            }
+        })
+    );
+    return years;
+};
 
 export const cliErrorAndExit = (msg: string) => {
     console.log(`ERROR: ${msg}. Use --help for options.`);
@@ -131,6 +162,11 @@ const cmdOpts: Array<any> = [
         type: Boolean,
     },
     {
+        name: "by-year-only",
+        default: false,
+        type: Boolean,
+    },
+    {
         name: "source-dir",
         type: String,
         alias: "s",
@@ -146,8 +182,8 @@ const cmdOpts: Array<any> = [
         name: "prefix",
         type: String,
         alias: "p",
-        description: `Prefix for created archives - will end up as <target-dir>/<prefix>_<year>_<month>.tar`,
-    }
+        description: `Prefix for created archives - will end up as <target-dir>/<prefix>_<year/month suffix>.tar or <target-dir>/<prefix>_<year>.tar if --by-year-only is specified.`,
+    },
 ];
 const options = parseCmd(cmdOpts);
 cliCheckHelp(cmdOpts, options, "Splits images and videos into tar-achives based on month and year");
@@ -161,24 +197,44 @@ if (!options["prefix"]) {
     cliErrorAndExit("Must specify prefix for resulting tar-archives");
 }
 
-const main = async (tarDirectory : string, tarPrefix : string, directory : string) => {
-    // bucket files per year
-    const years = await bucketFilesByYearMonth(directory);
+const main = async (tarDirectory : string, tarPrefix : string, directory : string, by_year_only: boolean) => {
+    if (by_year_only) {
+        const years = await bucketFilesByYear(directory);
 
-    // write year-month tar files
-    await Promise.all(Object.keys(years).map(async year => {
-        await Promise.all(Object.keys(years[year].months).sort().map(async month => {
-            const file = path.join(tarDirectory, `${tarPrefix}_${year}_${month}.tar`);
-            console.log(`Creating ${file}`);
-            await tar.create(
-                {
-                    gzip: false,
-                    file,
-                },
-                years[year].months[month].map((fd) => fd.path)
-            )
+        // write year tar files
+        await Promise.all(
+            Object.keys(years).map(async (year) => {
+                const file = path.join(tarDirectory, `${tarPrefix}_${year}.tar`);
+                console.log(`Creating ${file}`);
+                await tar.create(
+                    {
+                        gzip: false,
+                        file,
+                    },
+                    years[year].map((fd) => fd.path)
+                );
+            })
+        );
+    } else {
+        const years = await bucketFilesByYearMonth(directory);
+
+        // write year-month tar files
+        await Promise.all(Object.keys(years).map(async year => {
+            await Promise.all(Object.keys(years[year].months).sort().map(async month => {
+                const file = path.join(tarDirectory, `${tarPrefix}_${year}_${month}.tar`);
+                console.log(`Creating ${file}`);
+                await tar.create(
+                    {
+                        gzip: false,
+                        file,
+                    },
+                    years[year].months[month].map((fd) => fd.path)
+                )
+            }))
         }))
-    }))
+    }
+
+    // exit
     process.exit(0);
 };
-main(options["target-dir"], options["prefix"], options["source-dir"]);
+main(options["target-dir"], options["prefix"], options["source-dir"], options["by-year-only"]);

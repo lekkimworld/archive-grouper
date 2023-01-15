@@ -1,6 +1,6 @@
 {
   "name": "archive-grouper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Utility to group media files into archives",
   "main": "src/index.ts",
   "scripts": {
